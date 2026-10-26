@@ -1,0 +1,39 @@
+---
+- name: Prepare monitoring target
+  hosts: monitoring_targets
+  become: true
+
+  tasks:
+    - name: Install Node Exporter and stress-ng
+      ansible.builtin.apt:
+        name:
+          - prometheus-node-exporter
+          - stress-ng
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+        lock_timeout: 120
+        install_recommends: false
+
+    - name: Enable and start Node Exporter
+      ansible.builtin.systemd_service:
+        name: prometheus-node-exporter
+        enabled: true
+        state: started
+
+    - name: Create dedicated directory for disk experiments
+      ansible.builtin.file:
+        path: /var/tmp/monitor-load
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: "0755"
+
+    - name: Check metrics endpoint
+      ansible.builtin.uri:
+        url: http://127.0.0.1:9100/metrics
+        status_code: 200
+      register: metrics_endpoint
+      until: metrics_endpoint.status == 200
+      retries: 10
+      delay: 2

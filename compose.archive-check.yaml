@@ -1,0 +1,8 @@
+services:
+  thanos-query:
+    command:
+      - query
+      - --grpc-address=0.0.0.0:10901
+      - --http-address=0.0.0.0:10902
+      - --endpoint=thanos-store:10901
+      - --no-query.partial-response

@@ -5,3 +5,4 @@ __pycache__/
 .env.*
 !.env.example
 ansible/inventory.ini
+prometheus/targets.json

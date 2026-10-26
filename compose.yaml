@@ -1,0 +1,130 @@
+x-objstore-config: &objstore-config |
+  type: S3
+  config:
+    bucket: metrics
+    endpoint: minio:9000
+    access_key: ${MINIO_ROOT_USER:?Set MINIO_ROOT_USER}
+    secret_key: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD}
+    insecure: true
+
+services:
+  prometheus:
+    image: prom/prometheus:v3.15.1
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=6h
+      - --storage.tsdb.retention.size=256MB
+      - --storage.tsdb.min-block-duration=2m
+      - --storage.tsdb.max-block-duration=2m
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - ./prometheus/targets.json:/etc/prometheus/targets.json:ro
+      - prometheus-data:/prometheus
+    restart: unless-stopped
+    mem_limit: 512m
+
+  grafana:
+    image: grafana/grafana:13.2.4
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:?Set the password in .env}"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    restart: unless-stopped
+    mem_limit: 512m
+
+  thanos-sidecar:
+    user: "65534:65534"
+    image: quay.io/thanos/thanos:v0.42.4
+    command:
+      - sidecar
+      - --prometheus.url=http://prometheus:9090
+      - --tsdb.path=/prometheus
+      - --grpc-address=0.0.0.0:10901
+      - --http-address=0.0.0.0:10902
+      - --objstore.config
+      - *objstore-config
+    volumes:
+      - prometheus-data:/prometheus
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+    mem_limit: 256m
+
+  thanos-query:
+    image: quay.io/thanos/thanos:v0.42.4
+    command:
+      - query
+      - --grpc-address=0.0.0.0:10901
+      - --http-address=0.0.0.0:10902
+      - --endpoint=thanos-sidecar:10901
+      - --no-query.partial-response
+      - --endpoint=thanos-store:10901
+    ports:
+      - "127.0.0.1:10904:10902"
+    depends_on:
+      - thanos-sidecar
+    restart: unless-stopped
+    mem_limit: 256m
+
+  minio:
+    build:
+      context: ./docker/minio
+    image: observability-minio:local
+    command:
+      - server
+      - /data
+      - --console-address=:9001
+    environment:
+      MINIO_ROOT_USER: "${MINIO_ROOT_USER:?Set MINIO_ROOT_USER}"
+      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD}"
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    volumes:
+      - minio-data:/data
+    restart: unless-stopped
+    mem_limit: 512m
+
+  store-init:
+    image: prom/prometheus:v3.15.1
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["chown 1001:1001 /var/thanos/store"]
+    volumes:
+      - thanos-store-data:/var/thanos/store
+    restart: "no"
+
+  thanos-store:
+    image: quay.io/thanos/thanos:v0.42.4
+    command:
+      - store
+      - --data-dir=/var/thanos/store
+      - --grpc-address=0.0.0.0:10901
+      - --http-address=0.0.0.0:10902
+      - --objstore.config
+      - *objstore-config
+    volumes:
+      - thanos-store-data:/var/thanos/store
+    depends_on:
+      minio:
+        condition: service_started
+      store-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    mem_limit: 512m
+
+volumes:
+  prometheus-data:
+  grafana-data:
+  minio-data:
+  thanos-store-data:

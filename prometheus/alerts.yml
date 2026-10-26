@@ -1,0 +1,23 @@
+groups:
+  - name: linux-lab
+    rules:
+      - alert: HighCPUUsage
+        expr: |
+          100 * (1 - avg by (instance) (
+            rate(node_cpu_seconds_total{job="node",mode="idle"}[1m])
+          )) > 70
+        for: 20s
+        labels:
+          severity: warning
+        annotations:
+          summary: "CPU usage above 70%"
+          description: "High CPU usage on {{ $labels.instance }}"
+
+      - alert: NodeExporterDown
+        expr: up{job="node"} == 0
+        for: 20s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Node Exporter is unavailable"
+          description: "Cannot scrape {{ $labels.instance }}"
